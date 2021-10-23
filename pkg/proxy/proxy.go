@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"io"
 	"net"
 	"net/http"
 	"time"
@@ -15,9 +14,10 @@ var (
 
 type proxyServer struct {
 	transport *http.Transport
+	limiter   *ioLimiter
 }
 
-func NewProxyServer() http.HandlerFunc {
+func NewProxyServer(lr LimitRule) http.HandlerFunc {
 	return (&proxyServer{
 		transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
@@ -31,6 +31,7 @@ func NewProxyServer() http.HandlerFunc {
 			TLSHandshakeTimeout:   defaultTimeout,
 			ExpectContinueTimeout: defaultTimeout,
 		},
+		limiter: newIOLimiter(lr),
 	}).serveHTTP
 }
 
@@ -60,7 +61,7 @@ func (ps *proxyServer) handleHTTP(respW http.ResponseWriter, req *http.Request) 
 
 	copyResponseHeader(respW, fresp.Header)
 	respW.WriteHeader(fresp.StatusCode)
-	if _, err := io.Copy(respW, fresp.Body); err != nil {
+	if _, err := ps.copyWithLimiter(req.Context(), log(req), respW, fresp.Body); err != nil {
 		log(req).Errorf("failed to forward response: %v", err)
 	}
 }
@@ -99,9 +100,8 @@ func (ps *proxyServer) handleTunnel(respW http.ResponseWriter, req *http.Request
 		remoteConn.Close()
 		localConn.Close()
 	}()
-	go io.Copy(remoteConn, localReader)
-
-	if _, err := io.Copy(localConn, remoteConn); err != nil {
+	go ps.copyWithLimiter(req.Context(), log(req), remoteConn, localReader)
+	if _, err := ps.copyWithLimiter(req.Context(), log(req), localConn, remoteConn); err != nil {
 		log(req).Errorf("failed to forward data: %v", err)
 	}
 }
