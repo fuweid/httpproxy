@@ -27,7 +27,7 @@ type LimitRule struct {
 }
 
 func (lr LimitRule) Valid() bool {
-	return lr.LimitedBytesPerSec >= defaultBufSize && lr.RetryAfter > 0
+	return lr.LimitedBytesPerSec >= defaultBufSize
 }
 
 type ioLimiter struct {
